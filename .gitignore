@@ -1,0 +1,5 @@
+# Local environment (copy from .env.example)
+.env
+
+# macOS
+.DS_Store

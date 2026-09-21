@@ -1,0 +1,95 @@
+name: freescout-poc
+
+# Email-only FreeScout ticketing PoC
+#
+#   http://localhost:8080  FreeScout (agents)
+#   http://localhost:8081  Roundcube webmail (acts as the customer's email client)
+#
+# Flow:
+#   customer (Roundcube) --SMTP--> greenmail: support@helpdesk.local
+#   FreeScout fetches support@ over IMAP --> ticket
+#   agent reply --SMTP--> greenmail: customer's mailbox --> visible in Roundcube
+#   customer replies in Roundcube --> same ticket in FreeScout
+
+services:
+  freescout-app:
+    image: docker.io/nfrastack/freescout:latest
+    container_name: freescout-app
+    depends_on:
+      - freescout-db
+    ports:
+      - "8080:80"
+    volumes:
+      - freescout-data:/data
+      - freescout-logs:/logs
+    environment:
+      - CONTAINER_NAME=freescout-app
+      - TIMEZONE=${TZ:-Etc/UTC}
+      - DB_TYPE=mariadb
+      - DB_HOST=freescout-db
+      - DB_PORT=3306
+      - DB_NAME=freescout
+      - DB_USER=freescout
+      - DB_PASS=${DB_PASS:-freescoutpass}
+      - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@helpdesk.local}
+      - ADMIN_FIRST_NAME=Asha
+      - ADMIN_LAST_NAME=Admin
+      - ADMIN_PASS=${ADMIN_PASS:-Admin12345}
+      - APP_URL=http://localhost:8080
+      - FREESCOUT_APP_LOCALE=en
+      # FreeScout blocks mail servers on private IPs; allow the Docker network for this local PoC
+      - FREESCOUT_APP_REMOTE_HOST_WHITE_LIST=greenmail,172.16.0.0/12
+      # System emails (agent notifications) also go through GreenMail
+      - FREESCOUT_MAIL_DRIVER=smtp
+      - FREESCOUT_MAIL_HOST=greenmail
+      - FREESCOUT_MAIL_PORT=3025
+      - FREESCOUT_MAIL_FROM_ADDRESS=noreply@helpdesk.local
+      - FREESCOUT_MAIL_FROM_NAME=Helpdesk
+      # Uncomment if mailbox fetching fails with an IMAP SEARCH error
+      # - FREESCOUT_APP_SINCE_WITHOUT_QUOTES_ON_FETCHING=true
+    restart: unless-stopped
+
+  freescout-db:
+    image: docker.io/nfrastack/mariadb:11.8
+    container_name: freescout-db
+    volumes:
+      - freescout-db:/data
+    environment:
+      - TIMEZONE=${TZ:-Etc/UTC}
+      - ROOT_PASS=${DB_ROOT_PASS:-rootpassword}
+      - DB_NAME=freescout
+      - DB_USER=freescout
+      - DB_PASS=${DB_PASS:-freescoutpass}
+    restart: unless-stopped
+
+  # Local mail server for every address in the demo (support@ and customers).
+  # Auth is disabled: any password works and mailboxes are created on first use.
+  # Mail is kept in memory and is lost when this container restarts.
+  greenmail:
+    image: greenmail/standalone:latest
+    container_name: greenmail
+    ports:
+      - "3025:3025"   # SMTP
+      - "3143:3143"   # IMAP
+    restart: unless-stopped
+
+  # Customer's email client. Log in with any customer address, e.g. ravi@example.com, any password.
+  webmail:
+    image: roundcube/roundcubemail:latest
+    container_name: webmail
+    depends_on:
+      - greenmail
+    ports:
+      - "8081:80"
+    environment:
+      - ROUNDCUBEMAIL_DEFAULT_HOST=greenmail
+      - ROUNDCUBEMAIL_DEFAULT_PORT=3143
+      - ROUNDCUBEMAIL_SMTP_SERVER=greenmail
+      - ROUNDCUBEMAIL_SMTP_PORT=3025
+      - ROUNDCUBEMAIL_DB_TYPE=sqlite
+    restart: unless-stopped
+
+volumes:
+  freescout-data:
+  freescout-logs:
+  freescout-db:
